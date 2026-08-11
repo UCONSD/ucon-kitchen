@@ -1,278 +1,156 @@
-# Project State — Design Foundation
-
-Status: **design draft** (Phase 2). This is the system the conversational AI sits on top
-of. Design and agree this before writing the AI layer.
-
+# Project State — Design Foundation (v2)
+Status: **design draft, synced with** `specs/2026-08-10-qualification-rules-engine.md` (v2).
+This is the system the conversational AI sits on top of. Design and agree this before
+writing the AI layer.
 ## The one principle everything hangs on
-
-**The chat transcript is not the database.** The conversation is an input/output
-interface. The source of truth is:
-
+**The chat transcript is not the database.** The conversation is an input/output interface.
+The source of truth is:
 1. **Project State** — the current structured picture of one homeowner's kitchen project.
 2. **Events** — an append-only log of everything that happened.
-
-The **LLM emits events**. A **deterministic rules engine** reads state + events and
-computes **milestone transitions**. The LLM never sets a milestone directly. This is what
-keeps a smart conversation from running on a dumb system.
-
+The **LLM emits events**. A **deterministic rules engine** reads state + events and computes
+**status transitions**. The LLM never sets a status directly.
 ```
-CUSTOMER
-   │  (text, photos, uploads)
-   ▼
-CONVERSATION UI  ──►  LLM (understand / extract)  ──►  emits EVENTS
-                                                          │
-                                                          ▼
-                                                  PROJECT STATE (source of truth)
-                                                          │
-                                                          ▼
-                                                  RULES / QUALIFICATION ENGINE
-                                                          │
-                                                          ▼
-                                         milestone transition + Next Best Action
+CUSTOMER  --(text, photos, uploads, activity)-->  LLM (understand / extract)  --emits EVENTS-->
+   PROJECT STATE (source of truth)  -->  RULES / QUALIFICATION ENGINE  -->  status + Next Best Action
 ```
-
 ---
-
-## 1. Milestone state machine
-
-`current_stage` tracks the furthest discovery progression reached. Qualification outcome
-and "saved" are tracked separately (they are not strictly linear — a customer can save
-after two minutes, and qualification is a computed verdict).
-
-### Discovery stages (linear)
-
+## 1. State dimensions (independent — never one enum standing in for another)
+A project is described by several **orthogonal** dimensions. Keeping them separate is what
+prevents state spaghetti. (Full semantics live in the qualification spec; summarized here.)
 ```
-VISITOR_STARTED
-   → PROJECT_UNDERSTOOD        (type, pain points, needs, style, appliances captured)
-   → BUDGET_ESTABLISHED        (declared, refused, or "help me" — all three handled)
-   → FIRST_VALUE_DELIVERED     (summary + initial assessment shown to customer)
-   → QUALIFIED                 (passed deterministic gates)
-   → HANDOFF_READY             (brief prepared for a human designer)
+conversation_stage       DISCOVERY | FIRST_VALUE | DESIGN_REVIEW
+qualification_status      UNASSESSED | INSUFFICIENT_DATA | POTENTIAL_FIT
+                          | QUALIFIED | NEEDS_REVIEW | NOT_FIT
+handoff_status            NOT_READY | READY | ASSIGNED
+intent_status            ACTIVE | PAUSED | WITHDRAWN
+customer_identity_status  ANONYMOUS | CONTACT_PROVIDED | CONTACT_VERIFIED
+next_best_action          ASK_ZIP | ASK_SCOPE | ASK_BUDGET | REQUEST_PHOTOS
+                          | DELIVER_FIRST_VALUE | SAVE_PROJECT | HUMAN_DESIGN_REVIEW
+                          | OUT_OF_AREA_REVIEW | NURTURE | NOT_A_FIT
 ```
-
-The **first customer-visible milestone** is `FIRST_VALUE_DELIVERED`:
-"We understand your project well enough to tell you whether your expectations and budget
-look realistic and what direction makes sense next." Target: 8–12 minutes of
-conversation, hard ceiling ~15.
-
-### Qualification outcome (computed verdict, separate field)
-
-```
-PENDING → one of:
-   QUALIFIED           → proceed to HANDOFF_READY
-   NURTURE             → real lead, not ready / soft mismatch; no designer yet
-   NOT_SERVICEABLE     → outside service area
-   BUDGET_MISMATCH     → budget vs requested scope don't align
-```
-
-### Saved (orthogonal boolean)
-
-`is_saved` flips true once identity/contact is captured (§7 of the brief: offered after a
-few meaningful answers, not up front). A project can be saved at any point from
-`PROJECT_UNDERSTOOD` onward. **`HANDOFF_READY` requires `is_saved = true`.**
-
+- **conversation_stage** is the discovery lifecycle. `FIRST_VALUE` is the first
+  customer-visible milestone: "we understand your project well enough to tell you whether
+  budget/scope look realistic and what's next" (target 8–12 min conversation, ceiling ~15).
+- **handoff is its own dimension**, not a stage. A project can be in
+  `conversation_stage = DESIGN_REVIEW` while `handoff_status` moves NOT_READY -> READY -> ASSIGNED.
+- **qualification_status** is the automation-eligibility verdict (see spec philosophy:
+  QUALIFIED -> auto handoff; POTENTIAL_FIT / INSUFFICIENT_DATA / NEEDS_REVIEW -> queue / nurture /
+  founder review; NOT_FIT -> no designer).
+- **intent_status** and **customer_identity_status** are engine-set gates on auto-handoff;
+  neither is a boolean the client can flip.
+These replace the v1 draft's `current_stage` / `qualification_outcome` / `is_saved`.
 ---
-
 ## 2. Data model (PostgreSQL / Supabase)
-
-Typed columns for well-known fields; a `facts` table for anything needing provenance; an
-`events` table as the append-only spine. Keep it relational — this is why we chose
-Postgres over Firestore.
-
+Typed columns for well-known fields; a `facts` table for provenance-tracked facts; an
+`events` table as the append-only spine.
 ### `projects` — one row per kitchen project
-
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid PK | channel-independent Project ID |
 | `created_at` / `updated_at` | timestamptz | |
-| `current_stage` | enum | see §1 |
-| `qualification_outcome` | enum | `pending` default |
-| `is_saved` | bool | identity captured |
+| `conversation_stage` | enum | default `DISCOVERY` |
+| `qualification_status` | enum | default `UNASSESSED` |
+| `handoff_status` | enum | default `NOT_READY` |
+| `intent_status` | enum | default `ACTIVE` |
+| `customer_identity_status` | enum | default `ANONYMOUS` |
+| `next_best_action` | enum | nullable |
+| `project_type` | enum | `occupied_remodel | vacant_remodel | new_construction` |
+| `project_scope` | enum | `cabinetry_only | cabinetry_install | full_kitchen_project | unknown_scope` |
+| `zip` | text | serviceability + local context (not a wealth proxy) |
+| `budget_amount` | int null | USD |
+| `budget_source` | enum | `UNKNOWN | CUSTOMER_DECLARED | CUSTOMER_REFUSED | SYSTEM_ASSISTED` |
+| `style_direction` | text null | |
+| `timeline` | text null | |
+| `plans_available` | bool null | relevant for `new_construction` |
 | `channel` | enum | `web` (MVP); later `sms`, `email`, `whatsapp` |
-| `assigned_designer_id` | uuid FK null | set at/after `HANDOFF_READY` |
-
-### `project_state` core fields (columns on `projects` or a 1:1 table)
-
-Well-known, queryable fields:
-
-| Field | Example |
-|-------|---------|
-| `project_type` | `occupied_remodel` \| `vacant_remodel` \| `new_construction` |
-| `zip` | `92037` (serviceability, local context, regional pricing — **not** a wealth proxy) |
-| `budget_amount` | `80000` (nullable) |
-| `budget_source` | `customer_declared` \| `assisted` \| `refused` \| `unknown` |
-| `style_direction` | `warm contemporary` |
-| `timeline` | e.g. `3-6 months` \| `exploring` |
-| `plans_available` | bool (relevant for `new_construction`) |
-
-Flexible/less-structured detail (pain points, needs, must/nice-to-haves, household use,
-appliance preferences) can live in a `details jsonb` column for the MVP, promoted to typed
-columns as they prove out.
-
-### `facts` — provenance-tracked facts (§14 of brief)
-
-For any fact where **where it came from matters**. This is what lets the app tell a
-customer-declared budget from an inferred one, or a 2019 listing photo from current
-condition.
-
+| `assigned_designer_id` | uuid FK null | set only when `handoff_status = ASSIGNED` (post-v1) |
+| `details` | jsonb | flexible: pain points, needs, household use, appliance prefs |
+Status columns are **service-role write only** (RLS). The client and the LLM cannot write them.
+### `facts` — provenance-tracked facts
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid PK | |
 | `project_id` | uuid FK | |
 | `key` | text | e.g. `budget`, `property_value`, `existing_kitchen_condition` |
 | `value` | jsonb | |
-| `source` | enum | `customer` \| `llm_inferred` \| `external_listing` \| `designer` \| `site_verification` |
+| `source` | enum | `customer | llm_inferred | external_listing | designer | site_verification` |
 | `captured_at` | timestamptz | |
-| `confidence` | enum | `high` \| `medium` \| `low` |
-| `verification_status` | enum | `unverified` \| `customer_confirmed` \| `verified` |
-
-Rule of thumb: a customer-declared budget is `source=customer, confidence=high`; a listing
-photo is `source=external_listing, confidence=low` as current condition until the customer
-confirms. Appliance model numbers must be re-verified before engineering/production
-(future).
-
+| `confidence` | enum | `high | medium | low` |
+| `verification_status` | enum | `unverified | customer_confirmed | verified` |
 ### `events` — append-only log (source of truth for funnel + transitions)
-
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid PK | |
 | `project_id` | uuid FK | |
-| `type` | text | see event list below |
+| `type` | text | see section 3 |
 | `payload` | jsonb | |
-| `actor` | enum | `system` \| `llm` \| `customer` \| `designer` |
+| `actor` | enum | `system | llm | customer | designer` |
 | `created_at` | timestamptz | |
-
-Never updated or deleted. Milestone transitions are derived from events, not written
-ad hoc.
-
+Never updated or deleted. Status transitions are derived from events, not written ad hoc.
 ### `messages` — the transcript (interface, NOT source of truth)
-
-| Column | Type |
-|--------|------|
-| `id` | uuid PK |
-| `project_id` | uuid FK |
-| `role` | `customer` \| `assistant` \| `designer` |
-| `content` | text |
-| `created_at` | timestamptz |
-
-### `files` — uploads linked to Project State (§12)
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | uuid PK | |
-| `project_id` | uuid FK | |
-| `storage_path` | text | Supabase Storage |
-| `kind` | enum | `current_kitchen` \| `inspiration` \| `appliance` \| `floor_plan` \| `pdf_doc` |
-| `uploaded_at` | timestamptz | |
-
+`id`, `project_id`, `role` (`customer | assistant | designer`), `content`, `created_at`.
+### `files` — uploads linked to Project State
+`id`, `project_id`, `storage_path` (Supabase Storage), `kind`
+(`current_kitchen | inspiration | appliance | floor_plan | pdf_doc`), `uploaded_at`.
 ### Identity / contact
-
-Captured only after first value (§7). Store `name`, `email`, `phone`, `zip`, `address`
-(address later/optional) linked to `project_id`, gated behind Supabase Auth once the
-visitor saves. Anonymous-until-save is a core UX requirement.
-
+Captured only after first value. `name`, `email`, `phone`, `zip`, `address` (address
+later/optional) linked to `project_id`. Capturing a real contact advances
+`customer_identity_status` to `CONTACT_PROVIDED`; a blank/obviously-fake contact stays
+`ANONYMOUS`. Anonymous-until-save is a core UX requirement (anonymous Supabase Auth user,
+upgraded in place on save so `auth.uid()` never changes).
 ---
-
 ## 3. Events (the vocabulary the LLM emits)
-
-MVP set — extend deliberately, not casually:
-
+MVP set — extend deliberately:
 ```
 conversation.started
 message.received / message.sent
-fact.captured                 { key, value, source, confidence }
-scope.updated                 { project_type | pain_points | needs | style | appliances }
-file.uploaded                 { file_id, kind }
-budget.captured               { amount | refused | unknown, source }
+fact.captured            { key, value, source, confidence }
+scope.updated            { project_type | project_scope | pain_points | needs | style | appliances }
+file.uploaded            { file_id, kind }
+budget.captured          { amount | none, budget_source }
 first_value.delivered
-qualification.evaluated       { outcome, reasons[], failed_gates[] }
-identity.captured             → sets is_saved
-project.saved
-handoff.requested
-handoff.assigned              { designer_id }
-conversation.abandoned        { at_stage }
+intent.updated           { intent_status }              # ACTIVE | PAUSED | WITHDRAWN
+qualification.evaluated  { outcome, rule_set_version, rule_results[], missing_fields[], evaluated_at }
+identity.captured        { customer_identity_status }
+handoff.ready
+handoff.assigned         { designer_id }                # post-v1
+conversation.abandoned   { at_stage }
 conversation.resumed
 ```
-
-Funnel analytics (§30–31: started, first meaningful answer, photos uploaded, budget
-reached, disclosed/refused, first milestone, abandonment stage, returned, paid step) are
-derived from this same event stream and mirrored to **PostHog**. Postgres `events` is the
-system of record; PostHog is the analytics view.
-
+Funnel analytics (§30–31 of the brief) are derived from this same stream and mirrored to
+**PostHog**. Postgres `events` is the system of record; PostHog is the analytics view.
 ---
-
-## 4. Deterministic rules (the SOP behind qualification)
-
-These are **rules, not LLM judgment** (§19). Write them as an SOP first; they become the
-qualification engine. Values in `CAPS` are configurable constants.
-
-```
-Serviceability
-  IF zip NOT IN SERVICE_AREA
-    → qualification_outcome = NOT_SERVICEABLE
-
-Budget vs scope
-  IF budget_amount < MINIMUM_VIABLE_BUDGET  AND  scope = full_custom
-    → qualification_outcome = BUDGET_MISMATCH
-
-New construction
-  IF project_type = new_construction  AND  plans_available = true
-    → next_best_action = REQUEST_PLANS
-
-Qualification gate
-  IF serviceable
-     AND current_stage >= FIRST_VALUE_DELIVERED
-     AND budget handled (declared OR explicitly refused OR assisted)
-     AND no disqualifying gate failed
-    → qualification_outcome = QUALIFIED
-    → next_best_action = HUMAN_DESIGN_REVIEW
-```
-
-### Transition guards (invariants the engine enforces)
-
-- Cannot reach `QUALIFIED` unless `current_stage >= FIRST_VALUE_DELIVERED` and the budget
-  question has been handled.
-- Cannot reach `HANDOFF_READY` unless `qualification_outcome = QUALIFIED` **and**
-  `is_saved = true`.
-- A failed serviceability or budget gate routes to `NOT_SERVICEABLE` / `BUDGET_MISMATCH` /
-  `NURTURE` — **never** silently to a designer.
-- Only the backend/rules engine writes `qualification_outcome`, `current_stage`,
-  `assigned_designer_id`. The client (and the LLM) cannot.
-
-### Row Level Security (Supabase, FULL mode)
-
-- Anonymous visitor: can read/write only **their own** project (session-scoped) and only
-  the customer-writable fields.
-- `qualification_outcome`, `current_stage`, `assigned_designer_id`, `facts.source` for
-  non-customer sources → backend-service-role writes only.
-- Designers: read projects where `qualification_outcome = QUALIFIED`; write notes/status.
-
+## 4. Rules & guards (owned by the engine; full logic in the spec)
+The qualification/handoff logic lives in `specs/2026-08-10-qualification-rules-engine.md`.
+Invariants the state model must enforce:
+- Only the **service role** writes `qualification_status`, `handoff_status`,
+  `conversation_stage`, `next_best_action`. The client/LLM cannot.
+- `handoff_status = READY` only if `qualification_status = QUALIFIED`
+  AND `customer_identity_status >= CONTACT_PROVIDED` AND `intent_status = ACTIVE`.
+- Out-of-area ZIP -> `qualification_status = NEEDS_REVIEW` (retained), never discarded.
+- `budget_source in {CUSTOMER_REFUSED, SYSTEM_ASSISTED, UNKNOWN}` never fails the budget gate.
+- Every evaluation appends a versioned `qualification.evaluated` event.
+- RLS: an anonymous visitor can read/write only **their own** project, and only
+  customer-writable fields.
 ---
-
 ## 5. Layer separation (do not collapse these)
-
-Per the brief (§18), the LLM must not run on one giant system prompt. Distinct layers:
-
+The LLM must not run on one giant system prompt. Distinct layers:
 1. **Project State** — structured truth (this doc).
 2. **Required Information Model** — what we need to know per project type.
-3. **Conversation Playbook** — modules: Basics, Existing Kitchen, Needs, Style,
-   Appliances, Budget, Timeline (customer must not feel they're filling a form).
-4. **Deterministic Rules** — §4 above.
-5. **Next Best Question / Action** — given what we know, what's missing, and what matters
-   most now.
+3. **Conversation Playbook** — modules: Basics, Existing Kitchen, Needs, Style, Appliances,
+   Budget, Timeline (customer must not feel they're filling a form).
+4. **Deterministic Rules** — the qualification spec.
+5. **Next Best Question / Action** — given what we know, what's missing, what matters most now.
 6. **LLM conversational layer** — natural language and reasoning only.
-
-The LLM owns 3 and 6. The system owns 1, 2, 4, 5. Business-critical transitions are
-deterministic.
-
+The LLM owns 3 and 6. The system owns 1, 2, 4, 5. Business-critical transitions are deterministic.
 ---
-
-## 6. Open design questions (resolve in Phase 2 before implementation specs)
-
-- `MINIMUM_VIABLE_BUDGET` and `SERVICE_AREA` (ZIP list or radius) — concrete values.
-- Full-custom vs simpler scope: how is `scope` derived for the budget-mismatch rule?
-- Anonymous session model: how a pre-auth visitor's project is keyed and later bound to a
-  Supabase Auth user on save.
-- Which `details` fields get promoted to typed columns for MVP vs left in `jsonb`.
-- Required Information Model per `project_type` (occupied / vacant / new construction lead
-  to different workflows — §9 of brief).
+## 6. Open questions (resolve before implementation)
+From the qualification spec, still open:
+- **Budget floors** for `cabinetry_only` and `cabinetry_install` (`full_kitchen_project = 30000`).
+- **Exact San Diego ZIP coverage** for `SERVICE_AREA_ZIPS` (city vs metro/county).
+- **How `project_scope` is derived** early in conversation (LLM-inferred vs asked).
+Model-level, still open:
+- Anonymous session keying and in-place upgrade to a permanent Supabase Auth user on save.
+- The activity window that sets `intent_status = PAUSED` (how long is "inactive").
+- Which `details` fields get promoted to typed columns for MVP.
+- Required Information Model per `project_type` (occupied / vacant / new construction differ).
