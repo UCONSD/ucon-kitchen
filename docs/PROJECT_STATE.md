@@ -1,6 +1,7 @@
 # Project State — Design Foundation (v2)
 
-Status: **design foundation, synced with** `specs/2026-08-10-qualification-rules-engine.md` (v2).
+Status: **design foundation, synced with** `specs/2026-08-10-qualification-rules-engine.md`
+and `specs/2026-08-10-required-information-model.md`.
 This is the system the conversational AI sits on top of. Agree this before writing the AI layer.
 
 ## The one principle everything hangs on
@@ -53,24 +54,18 @@ intent_status            ACTIVE | PAUSED | WITHDRAWN
 customer_identity_status  ANONYMOUS | CONTACT_PROVIDED | CONTACT_VERIFIED
 next_best_action          ASK_ZIP | ASK_SCOPE | ASK_BUDGET | REQUEST_PHOTOS
                           | DELIVER_FIRST_VALUE | SAVE_PROJECT | HUMAN_DESIGN_REVIEW
-                          | OUT_OF_AREA_REVIEW | NURTURE | NOT_A_FIT
+                          | OUT_OF_AREA_REVIEW | NURTURE | NOT_A_FIT | REQUEST_PLANS
 ```
 
 - **conversation_stage** is the discovery lifecycle. `FIRST_VALUE` is the first
-  customer-visible milestone: "we understand your project well enough to tell you whether
-  budget/scope look realistic and what's next" (target 8–12 min, ceiling ~15).
-- **handoff is its own dimension**, not a stage. A project can be in
-  `conversation_stage = DESIGN_REVIEW` while `handoff_status` moves NOT_READY -> READY -> ASSIGNED.
-  **The designer work queue keys on `handoff_status = READY`, never on `qualification_status`.**
-- **qualification_status** is the automation-eligibility verdict (QUALIFIED -> eligible for handoff;
-  POTENTIAL_FIT / INSUFFICIENT_DATA / NEEDS_REVIEW -> queue / nurture / founder review; NOT_FIT -> no designer).
+  customer-visible milestone (target 8–12 min, ceiling ~15).
+- **handoff is its own dimension**, not a stage. **The designer work queue keys on
+  `handoff_status = READY`, never on `qualification_status`.**
+- **qualification_status** is the automation-eligibility verdict.
 - **intent_status** is set by explicit customer signals only — no timer/scheduler. `ACTIVE`
-  is the default (an abandoned browser stays `ACTIVE`; abandonment is recorded by analytics via
-  `conversation.abandoned`). `PAUSED` = explicit "later/not now". `WITHDRAWN` = explicit
-  "stop/not interested". Recency is checked at the moment of handoff.
-- **customer_identity_status** is syntactic only: `ANONYMOUS` = no syntactically valid contact;
-  `CONTACT_PROVIDED` = a syntactically valid email or phone supplied; `CONTACT_VERIFIED` = future.
-  Provided != verified; v1 does not judge authenticity.
+  is the default (abandoned browser stays `ACTIVE`; abandonment recorded via analytics).
+- **customer_identity_status** is syntactic only: `CONTACT_PROVIDED` = a syntactically valid
+  email/phone; `CONTACT_VERIFIED` = future. Provided != verified.
 
 These replace the v1 draft's `current_stage` / `qualification_outcome` / `is_saved`.
 
@@ -83,6 +78,8 @@ Typed columns for well-known fields; a `facts` table for provenance-tracked fact
 
 ### `projects` — one row per kitchen project (current materialized state)
 
+Status / dimension fields:
+
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid PK | channel-independent Project ID |
@@ -93,19 +90,41 @@ Typed columns for well-known fields; a `facts` table for provenance-tracked fact
 | `intent_status` | enum | default `ACTIVE` |
 | `customer_identity_status` | enum | default `ANONYMOUS` |
 | `next_best_action` | enum | nullable |
-| `project_type` | enum | `occupied_remodel | vacant_remodel | new_construction` |
-| `project_scope` | enum | `cabinetry_only | cabinetry_install | full_kitchen_project | unknown_scope` |
-| `zip` | text | **string**, never integer; serviceability + local context (not a wealth proxy) |
-| `budget_amount` | int null | USD |
-| `budget_source` | enum | `UNKNOWN | CUSTOMER_DECLARED | CUSTOMER_REFUSED | SYSTEM_ASSISTED` |
-| `style_direction` | text null | |
-| `timeline` | text null | |
-| `plans_available` | bool null | relevant for `new_construction` |
 | `channel` | enum | `web` (MVP); later `sms`, `email`, `whatsapp` |
 | `assigned_designer_id` | uuid FK null | set only when `handoff_status = ASSIGNED` (post-v1) |
-| `details` | jsonb | flexible: pain points, needs, household use, appliance prefs |
 
-Status columns are **service-role write only** (RLS). The client and the LLM cannot write them.
+Cost-driver fields (FIRST_VALUE model — see the Required Information Model spec). Fields
+marked *(engine)* are engine-materialized from customer narrative/photos, never client-written:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `project_type` | enum | `occupied_remodel | vacant_remodel | new_construction` |
+| `project_scope` | enum *(engine)* | `cabinetry_only | cabinetry_install | full_kitchen_project | unknown_scope` |
+| `zip` | text | **string**, never integer; serviceability + regional context |
+| `layout_type` | enum | `ONE_WALL | GALLEY | L_SHAPED | U_SHAPED | OTHER` |
+| `island` | enum | `NONE | EXISTING | PLANNED` |
+| `size_class` | enum *(engine)* | `COMPACT | STANDARD | LARGE | VERY_LARGE | UNKNOWN` |
+| `layout_change` | enum *(engine)* | `KEEP_BASIC_LAYOUT | MODERATE_CHANGE | MAJOR_RECONFIGURATION | UNKNOWN` |
+| `site_work_complexity` | enum *(engine)* | `LOW | MODERATE | HIGH | UNKNOWN` |
+| `product_level` | enum *(engine)* | `STANDARD_CUSTOM | PREMIUM_CUSTOM | ARCHITECTURAL_CUSTOM | UNKNOWN` |
+| `appliance_tier` | enum *(engine)* | `MAINSTREAM | PREMIUM | LUXURY_INTEGRATED | UNKNOWN` |
+| `budget_amount` | int null | USD |
+| `budget_source` | enum | `UNKNOWN | CUSTOMER_DECLARED | CUSTOMER_REFUSED | SYSTEM_ASSISTED` |
+| `plans_available` | bool null | `new_construction`; if true -> `REQUEST_PLANS` |
+| `primary_pain_points` | text[] | 1–2 items; what's wrong today |
+| `primary_must_haves` | text[] | 1–2 items; desired outcomes |
+| `timeline` | text null | not a FIRST_VALUE gate |
+| `style_direction` | text null | coarse only; detail is post-FIRST_VALUE |
+| `details` | jsonb | flexible narrative: existing conditions, needs, appliance prefs |
+
+Derived output:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `first_value_confidence` | enum *(derived)* | `LOW | MEDIUM | HIGH`; drives budget-range width + summary wording |
+
+Status, engine-materialized, and derived columns are **service-role write only** (RLS). The
+client and the LLM cannot write them.
 
 ### `facts` — provenance-tracked facts
 
@@ -113,12 +132,15 @@ Status columns are **service-role write only** (RLS). The client and the LLM can
 |--------|------|-------|
 | `id` | uuid PK | |
 | `project_id` | uuid FK | |
-| `key` | text | e.g. `budget`, `project_scope`, `property_value`, `existing_kitchen_condition` |
+| `key` | text | e.g. `budget`, `project_scope`, `layout_change`, `product_level` |
 | `value` | jsonb | |
 | `source` | enum | `customer | llm_inferred | external_listing | designer | site_verification` |
 | `captured_at` | timestamptz | |
 | `confidence` | enum | `high | medium | low` |
 | `verification_status` | enum | `unverified | customer_confirmed | verified` |
+
+Materialized cost-driver fields carry a `facts` confidence so `first_value_confidence` and the
+summary can hedge.
 
 ### `events` — append-only log (immutable history)
 
@@ -141,14 +163,14 @@ Never updated or deleted. Written in the same transaction that updates `projects
 
 `id`, `project_id`, `storage_path` (Supabase Storage), `kind`
 (`current_kitchen | inspiration | appliance | floor_plan | pdf_doc`), `uploaded_at`.
+Photos/plans can materialize `layout_type`, `island`, `size_class`, product/appliance signals.
 
 ### Identity / contact
 
-Captured only after first value. `name`, `email`, `phone`, `zip`, `address` (address
-later/optional) linked to `project_id`. A **syntactically valid** email or phone advances
+Captured only after first value. A **syntactically valid** email or phone advances
 `customer_identity_status` to `CONTACT_PROVIDED` (provided != verified; no authenticity check
-in v1). Anonymous-until-save is a core UX requirement (anonymous Supabase Auth user, upgraded
-in place on save so `auth.uid()` never changes).
+in v1). Anonymous-until-save (anonymous Supabase Auth user upgraded in place on save so
+`auth.uid()` never changes).
 
 ---
 
@@ -160,11 +182,11 @@ MVP set — extend deliberately:
 conversation.started
 message.received / message.sent
 fact.captured            { key, value, source, confidence }
-scope.updated            { project_type | project_scope | pain_points | needs | style | appliances }
+scope.updated            { project_type | project_scope | pain_points | must_haves | style | appliances }
 file.uploaded            { file_id, kind }
 budget.captured          { amount | none, budget_source }
-first_value.delivered
-intent.updated           { intent_status }              # ACTIVE | PAUSED | WITHDRAWN (explicit signals)
+first_value.delivered    { first_value_confidence }
+intent.updated           { intent_status }              # explicit signals only
 qualification.evaluated  { qualification_status, rule_set_version, rule_results[], missing_fields[], evaluated_at }
 identity.captured        { customer_identity_status }
 handoff.ready
@@ -173,29 +195,31 @@ conversation.abandoned   { at_stage }                   # analytics; does NOT ch
 conversation.resumed
 ```
 
-Funnel analytics (§30–31 of the brief) are derived from this same stream and mirrored to
+Funnel analytics (§30–31 of the brief) are derived from this stream and mirrored to
 **PostHog**. Postgres `events` is the system of record; PostHog is the analytics view.
 
 ---
 
-## 4. Rules & guards (owned by the engine; full logic in the spec)
+## 4. Rules & guards (owned by the engine; full logic in the specs)
 
-The qualification/handoff logic lives in `specs/2026-08-10-qualification-rules-engine.md`.
-Invariants the state model must enforce:
+Qualification/handoff logic: `specs/2026-08-10-qualification-rules-engine.md`.
+Cost-driver / FIRST_VALUE model: `specs/2026-08-10-required-information-model.md`.
 
-- Only the **service role** writes `qualification_status`, `handoff_status`, `project_scope`,
-  `conversation_stage`, `next_best_action`. The client/LLM cannot.
-- Each evaluation updates `projects` transactionally AND appends a versioned
-  `qualification.evaluated` event.
+- Only the **service role** writes `qualification_status`, `handoff_status`, `conversation_stage`,
+  `next_best_action`, the engine-materialized cost drivers (`project_scope`, `size_class`,
+  `layout_change`, `site_work_complexity`, `product_level`, `appliance_tier`), and the derived
+  `first_value_confidence`. The client/LLM cannot.
+- Each evaluation updates `projects` transactionally AND appends a versioned event.
 - The **designer queue is filtered by `handoff_status = READY`**, not `qualification_status`.
-  A QUALIFIED-then-WITHDRAWN project drops out of the queue (dimensions are independent).
 - `handoff_status = READY` only if `qualification_status = QUALIFIED`
   AND `customer_identity_status IN (CONTACT_PROVIDED, CONTACT_VERIFIED)`
-  AND `intent_status = ACTIVE`. Enum conditions use set membership, not `>=` ordering.
-- `project_scope` is materialized by the engine from an LLM candidate only at high confidence
-  (writes `projects.project_scope` AND appends `fact.captured`); else `ASK_SCOPE`.
+  AND `intent_status = ACTIVE`. Enum conditions use set membership, not `>=`.
+- Engine-materialized categories come from an LLM candidate only at sufficient confidence;
+  else the relevant `ASK_*` next_best_action. The engine writes both `projects` and `facts`.
+- FIRST_VALUE hard floor (see RIM spec): `project_type`, `zip`, `project_scope`, budget handled,
+  `size_class`, `layout_change`, and at least one of `product_level` / `appliance_tier`.
+  UNKNOWN drivers lower `first_value_confidence` rather than block.
 - Out-of-area ZIP -> `qualification_status = NEEDS_REVIEW` (retained), never discarded.
-- `budget_source in {CUSTOMER_REFUSED, SYSTEM_ASSISTED, UNKNOWN}` never fails the budget gate.
 - RLS: an anonymous visitor can read/write only **their own** project, and only
   customer-writable fields.
 
@@ -203,12 +227,9 @@ Invariants the state model must enforce:
 
 ## 5. Layer separation (do not collapse these)
 
-The LLM must not run on one giant system prompt. Distinct layers:
-
 1. **Project State** — structured truth (this doc).
-2. **Required Information Model** — what we need to know per project type (next spec).
-3. **Conversation Playbook** — modules: Basics, Existing Kitchen, Needs, Style, Appliances,
-   Budget, Timeline (customer must not feel they're filling a form).
+2. **Required Information Model** — what we must KNOW per project type (spec written).
+3. **Conversation Playbook** — modules + how each field is obtained (next spec).
 4. **Deterministic Rules** — the qualification spec.
 5. **Next Best Question / Action** — given what we know, what's missing, what matters most now.
 6. **LLM conversational layer** — natural language and reasoning only.
@@ -217,10 +238,10 @@ The LLM owns 3 and 6. The system owns 1, 2, 4, 5. Business-critical transitions 
 
 ---
 
-## 6. Open questions (implementation / later specs — not blocking qualification)
+## 6. Open questions (implementation / later specs — not blocking)
 
-- Anonymous session keying and in-place upgrade to a permanent Supabase Auth user on save
-  (implementation detail).
-- Which `details` fields get promoted to typed columns as they prove out.
-- **Required Information Model per `project_type`** (occupied / vacant / new construction differ)
-  — the subject of the next spec, together with the Conversation Playbook v1.
+- Anonymous session keying and in-place upgrade to a permanent Supabase Auth user on save.
+- Which `details` narrative (esp. occupied-remodel existing conditions) gets promoted to typed
+  columns once patterns repeat across the first ~50–100 conversations.
+- **Conversation Playbook + Next Best Question v1** — module ordering, ask-vs-infer, when a
+  photo replaces a question, and the single most-valuable-next-question rule (next spec).
