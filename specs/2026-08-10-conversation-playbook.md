@@ -148,23 +148,33 @@ a fresh open question; **high -> closed**; **low -> ask**. Never re-ask a closed
 
 ### 4.5 Next Best Question — priority + guards (not a formula-for-its-own-sake)
 
-Each turn after the opening triad: compute the set of **open, non-guarded** gaps, then act on
+Each turn: compute the set of **open, non-guarded** gaps, then act on
 the single highest-priority one (a question or a consolidating photo request). Priority ladder
 **[A]** — customer value sits **above** accuracy enhancers, because without it we cannot keep
 the FIRST_VALUE promise ("they understood me"), even though it isn't a pricing input:
 
 ```
-P0  Serviceability (zip)                      — until known
-P1  project_type + project_scope              — frame everything
-P2  Budget approach                            — the verdict target
-P3  Hard-floor cost blockers:                  size_class, layout_change,
-                                               and at-least-one of product_level/appliance_tier
-P4  Customer value (pain_points / must_haves)  — if still missing after narrative; required for delivery
-P5  Accuracy enhancers by verdict leverage:    site_work_complexity (esp. full_kitchen_project)
-                                               > second product/appliance signal
-                                               > layout_type / island
-P6  Low verdict-value (timeline, style detail) — only if essentially free
+P0  Project context (project_type)            — only if unknown; usually inferred from the
+                                              opening narrative, then skipped
+P1  Serviceability (zip)                       — hard gate; don't invest out of area
+P2  project_scope                              — what we're doing (sets the budget floor)
+P3  Budget approach                            — the verdict target
+P4  Hard-floor cost blockers:                  size_class, layout_change,
+                                              and at-least-one of product_level/appliance_tier
+P5  Customer value (pain_points / must_haves)  — if still missing after narrative; required for delivery
+P6  Accuracy enhancers by verdict leverage:    site_work_complexity (esp. full_kitchen_project)
+                                              > second product/appliance signal
+                                              > layout_type / island
+P7  Low verdict-value (timeline, style detail) — only if essentially free
 ```
+
+**Reconciliation with the opening triad (4.2).** The triad is not a separate ordering — it is
+the top of this one ladder: project context (P0, only if `project_type` isn't already inferred)
+-> ZIP (P1) -> budget approach (P3), with `project_scope` (P2) slotting in when it becomes the
+top open gap. This resolves the earlier ambiguity: when `project_type` is NOT inferable from the
+narrative, the first mandate is **ASK_PROJECT_CONTEXT**, not ASK_ZIP; once `project_type` is
+known (the common case, inferred from the opening story), serviceability (ZIP) is next. There is
+one ordering, and the "triad" is simply its rigid opening.
 
 Modifiers and guards (override the ladder):
 

@@ -165,6 +165,11 @@ QUAL-SCOPE-001  (how project_scope is obtained and materialized)
         -> projects.project_scope stays unknown_scope; next_best_action = ASK_SCOPE
   # Materialization is the engine's job. Appending fact.captured WITHOUT updating
   # projects.project_scope is a bug.
+  # Evidence-grounded confidence: a candidate counts as high confidence ONLY when the
+  # conversation contains an explicit textual signal for it. A driver the model asserts with
+  # no quotable signal is NOT high, regardless of the model's self-reported confidence -> it
+  # stays unknown_scope -> ASK_SCOPE. This rule applies to all high-stakes engine-materialized
+  # drivers, especially project_scope and budget (they set the budget floor / verdict).
 
 QUAL-BUDGET-001  (scope-aware budget floor; only when a number was declared)
   floor = MIN_BUDGET_BY_SCOPE[project_scope]

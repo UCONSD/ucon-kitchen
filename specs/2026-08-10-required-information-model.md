@@ -27,6 +27,11 @@ is not a FIRST_VALUE requirement.
 the **engine materializes** the category (same pattern as `project_scope` in QUAL-SCOPE-001).
 We never ask "what is your site_work_complexity?".
 
+**Evidence, not just claimed confidence.** Materialization of a cost driver requires an
+explicit textual signal in the conversation, not merely the model's self-reported confidence
+(see QUAL-SCOPE-001). High-stakes drivers (`project_scope`, `budget`) must not be set at high
+confidence without a quotable signal; absent it, leave the field unknown and ask.
+
 ## 0. Filter
 
 - **Whose time does this save?** The designer's (a complete-enough brief, no re-discovery)
