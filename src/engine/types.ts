@@ -9,7 +9,8 @@ export type ProjectScope =
   | 'full_kitchen_project'
   | 'unknown_scope';
 
-export type BudgetSource = 'UNKNOWN' | 'CUSTOMER_DECLARED' | 'CUSTOMER_REFUSED' | 'SYSTEM_ASSISTED';
+export const BUDGET_SOURCES = ['UNKNOWN', 'CUSTOMER_DECLARED', 'CUSTOMER_REFUSED', 'SYSTEM_ASSISTED'] as const;
+export type BudgetSource = (typeof BUDGET_SOURCES)[number];
 
 export type SizeClass = 'COMPACT' | 'STANDARD' | 'LARGE' | 'VERY_LARGE' | 'UNKNOWN';
 

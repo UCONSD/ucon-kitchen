@@ -1,4 +1,5 @@
 import { isServiceable } from './serviceability.js';
+import { BUDGET_SOURCES } from './types.js';
 import type {
   ApplianceTier,
   BudgetSource,
@@ -12,6 +13,16 @@ import type {
   ProjectType,
   SizeClass,
 } from './types.js';
+
+// Upper sanity ceiling for a materialized budget figure. Not a business/qualification rule
+// (those live in budgetFloor.ts) — purely a validation guard to reject absurd or injected
+// amounts. Generous enough that no realistic kitchen budget is rejected; revisit from real leads.
+const MAX_BUDGET_AMOUNT = 10_000_000;
+
+// Runtime guard so an arbitrary LLM-proposed string can never be cast into BudgetSource.
+function isBudgetSource(value: string): value is BudgetSource {
+  return (BUDGET_SOURCES as readonly string[]).includes(value);
+}
 
 // Confidence-gated materialization, matching QUAL-SCOPE-001's pattern applied to every
 // engine-materialized field, not just project_scope: high -> write + fact.captured event;
@@ -36,7 +47,15 @@ export function applyCandidateFacts(
       continue;
     }
 
-    next = writeField(next, candidate.field, candidate.value);
+    const written = writeField(next, candidate.field, candidate.value);
+    if (written === null) {
+      // Engine rejected an invalid money-adjacent candidate (non-sane budget_amount or an
+      // unrecognized budget_source). Ignore it entirely: no write, no fact.captured event, and no
+      // change to pending state — so the NBQ ladder keeps asking (ASK_BUDGET stays put) instead
+      // of advancing on a garbage value.
+      continue;
+    }
+    next = written;
     next.pending_corrections = next.pending_corrections.filter((c) => c.field !== candidate.field);
     events.push({
       type: 'fact.captured',
@@ -54,11 +73,13 @@ export function applyCandidateFacts(
   return { state: next, events };
 }
 
+// Returns the updated state, or null when the engine rejects the candidate as invalid. Only the
+// money-adjacent fields validate and can reject; every other field writes as before.
 function writeField(
   state: ProjectState,
   field: MaterializableField,
   value: CandidateFact['value'],
-): ProjectState {
+): ProjectState | null {
   switch (field) {
     case 'project_type':
       return { ...state, project_type: String(value) as ProjectType };
@@ -68,15 +89,25 @@ function writeField(
     }
     case 'project_scope':
       return { ...state, project_scope: String(value) as ProjectScope };
-    case 'budget_amount':
-      // A customer-stated budget figure IS a declared budget. Derive budget_source here so a
-      // materialized amount always clears the budget hard floor even when the extraction pass
-      // emitted the number without a separate budget_source candidate (the ASK_BUDGET-repeat
-      // bug). SYSTEM_ASSISTED budgets are engine-set and never arrive on this extraction path;
-      // an explicit refusal never carries an amount, so CUSTOMER_DECLARED is unambiguous here.
-      return { ...state, budget_amount: Number(value), budget_source: 'CUSTOMER_DECLARED' };
-    case 'budget_source':
-      return { ...state, budget_source: String(value) as BudgetSource };
+    case 'budget_amount': {
+      // Money-adjacent: coerce once and require a sane, positive amount within a generous ceiling.
+      // An invalid figure (NaN, <= 0, absurdly large, or non-numeric text/array) is rejected — we
+      // write neither the amount nor a derived budget_source, so ASK_BUDGET stays unresolved rather
+      // than advancing on garbage. A valid stated amount IS a declared budget, so budget_source is
+      // derived here (SYSTEM_ASSISTED budgets are engine-set, never on this extraction path; a
+      // refusal carries no amount) — that derivation is unchanged.
+      const amount = Number(value);
+      if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_BUDGET_AMOUNT) return null;
+      return { ...state, budget_amount: amount, budget_source: 'CUSTOMER_DECLARED' };
+    }
+    case 'budget_source': {
+      // Never trust an arbitrary LLM string on a money-adjacent field: accept only the declared
+      // BudgetSource enum values. An unrecognized value is rejected so it can't mark the budget
+      // "handled" and let ASK_BUDGET advance without a valid handled-budget state.
+      const source = String(value);
+      if (!isBudgetSource(source)) return null;
+      return { ...state, budget_source: source };
+    }
     case 'size_class':
       return { ...state, size_class: String(value) as SizeClass };
     case 'layout_change':

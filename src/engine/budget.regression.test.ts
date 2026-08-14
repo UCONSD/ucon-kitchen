@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, type ProjectState } from './types.js';
+import { createInitialState, type CandidateFact, type ProjectState } from './types.js';
 import { applyCandidateFacts } from './materialize.js';
 import { computeNextBestAction } from './nbq.js';
 import { evaluateHardFloor } from './hardFloor.js';
@@ -50,4 +50,55 @@ test('confidence gate is unchanged for inferred categorical drivers', () => {
   ]);
   assert.equal(state.size_class, 'UNKNOWN', 'medium categorical is not materialized');
   assert.equal(state.pending_corrections.length, 1, 'medium categorical is held for confirmation');
+});
+
+// --- Hardening (ca6a37a security review): money-adjacent input validation ---
+
+const INVALID_AMOUNTS: Array<[string, CandidateFact['value']]> = [
+  ['NaN from non-numeric text', 'eighty-five thousand'],
+  ['NaN from multi-value array', ['85000', '90000']],
+  ['zero', 0],
+  ['negative', -85000],
+  ['absurdly large (injection)', 999999999999],
+];
+
+for (const [label, value] of INVALID_AMOUNTS) {
+  test(`invalid budget_amount (${label}) is rejected and leaves ASK_BUDGET unresolved`, () => {
+    const { state, events } = applyCandidateFacts(parkedAtAskBudget(), [
+      { field: 'budget_amount', value, confidence: 'high' },
+    ]);
+    assert.equal(state.budget_amount, null, 'amount not written');
+    assert.equal(state.budget_source, 'UNKNOWN', 'source not derived from an invalid amount');
+    assert.equal(state.pending_corrections.length, 0, 'invalid high-confidence value is ignored, not parked');
+    assert.ok(!events.some((e) => e.type === 'fact.captured'), 'no fact.captured for a rejected value');
+    assert.ok(evaluateHardFloor(state).missing.includes('budget'), 'budget still on the hard floor');
+    assert.equal(computeNextBestAction(state), 'ASK_BUDGET', 'mandate stays on ASK_BUDGET');
+  });
+}
+
+test('a valid amount at the upper sanity ceiling is still accepted', () => {
+  const { state } = applyCandidateFacts(parkedAtAskBudget(), [
+    { field: 'budget_amount', value: 10_000_000, confidence: 'high' },
+  ]);
+  assert.equal(state.budget_amount, 10_000_000, 'ceiling value accepted');
+  assert.equal(state.budget_source, 'CUSTOMER_DECLARED');
+  assert.notEqual(computeNextBestAction(state), 'ASK_BUDGET', 'advances');
+});
+
+test('invalid budget_source string is rejected and cannot advance ASK_BUDGET', () => {
+  const { state, events } = applyCandidateFacts(parkedAtAskBudget(), [
+    { field: 'budget_source', value: 'TOTALLY_HANDLED', confidence: 'high' },
+  ]);
+  assert.equal(state.budget_source, 'UNKNOWN', 'arbitrary source not written');
+  assert.ok(!events.some((e) => e.type === 'fact.captured'), 'no fact.captured for a rejected source');
+  assert.equal(computeNextBestAction(state), 'ASK_BUDGET', 'stays on ASK_BUDGET');
+});
+
+test('a valid budget_source (CUSTOMER_REFUSED) is accepted and clears the budget floor', () => {
+  const { state } = applyCandidateFacts(parkedAtAskBudget(), [
+    { field: 'budget_source', value: 'CUSTOMER_REFUSED', confidence: 'high' },
+  ]);
+  assert.equal(state.budget_source, 'CUSTOMER_REFUSED');
+  assert.ok(!evaluateHardFloor(state).missing.includes('budget'), 'refusal is a handled budget');
+  assert.notEqual(computeNextBestAction(state), 'ASK_BUDGET', 'advances');
 });
