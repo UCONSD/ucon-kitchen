@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "roleplay": "tsx src/cli.ts"
+    "roleplay": "tsx src/cli.ts",
+    "test": "node --import tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "ai": "^7.0.59",

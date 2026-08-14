@@ -69,7 +69,12 @@ function writeField(
     case 'project_scope':
       return { ...state, project_scope: String(value) as ProjectScope };
     case 'budget_amount':
-      return { ...state, budget_amount: Number(value) };
+      // A customer-stated budget figure IS a declared budget. Derive budget_source here so a
+      // materialized amount always clears the budget hard floor even when the extraction pass
+      // emitted the number without a separate budget_source candidate (the ASK_BUDGET-repeat
+      // bug). SYSTEM_ASSISTED budgets are engine-set and never arrive on this extraction path;
+      // an explicit refusal never carries an amount, so CUSTOMER_DECLARED is unambiguous here.
+      return { ...state, budget_amount: Number(value), budget_source: 'CUSTOMER_DECLARED' };
     case 'budget_source':
       return { ...state, budget_source: String(value) as BudgetSource };
     case 'size_class':

@@ -72,6 +72,14 @@ project_type heuristics:
 - "we're building", "new construction", "haven't broken ground", "our builder" ->
   project_type = "new_construction", high confidence.
 
+budget heuristics:
+- An explicitly stated budget figure — "$85,000", "our budget is about 85k", "we've set aside
+  eighty grand", any concrete amount the homeowner gives as what they can spend — is
+  budget_amount at HIGH confidence AND budget_source = "CUSTOMER_DECLARED" at HIGH. Do not
+  undercall a clearly stated number as medium; medium is only for a genuine inference (a figure
+  they mention that may not be their budget). An explicit refusal ("I'd rather not say") is
+  budget_source = "CUSTOMER_REFUSED" at HIGH confidence, with no amount.
+
 Use these exact field names and enum values when you have signal for them:
 - project_type: "occupied_remodel" | "vacant_remodel" | "new_construction"
 - zip: a 5-digit string
@@ -139,6 +147,11 @@ to ask; whatever else they raised is already captured in Project State and will 
 later turn's mandate. The one exception: you may add a brief soft-correction alongside the
 assigned question (see PENDING SOFT CORRECTIONS below) — that does not count as asking
 something else.
+
+Never assess whether the budget is realistic, sufficient, or too high or too low, and never
+compare the budget to the scope, on any turn before DELIVER_FIRST_VALUE. If the homeowner just
+gave a budget, acknowledge the number plainly (e.g. "got it — $85,000") and move straight to the
+assigned question; the budget-vs-scope alignment verdict is delivered only at First Value.
 
 CURRENT KNOWN PROJECT STATE (do not re-ask any of these):
 ${describeKnownState(state)}
