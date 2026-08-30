@@ -74,3 +74,65 @@ accounts and workflow. Do not import from or reference the Field App codebase.
 
 "Own on write, not read." Cowork/chat owns `specs/` and `docs/` for writing; Claude Code
 owns code for writing; either can read anything.
+
+## Session context and discipline
+
+**Spec.** A coding session does not start without a filled-in spec based on
+`docs/spec-template.md`. No spec, no session. The template itself explains the
+structure and the size limit.
+
+**Usable context is ~100k tokens**, regardless of the advertised window size.
+Watch the counter on every turn.
+
+**At ~100k the session ends.** Not "carry on carefully" — close it and open a new
+one with a new spec. Work produced past that line costs more to verify than to
+redo.
+
+**Auto-compact is a red flag.** On compaction the model drops whatever it judged
+unimportant, and does not report what. If compaction fired during coding, the
+session's output is treated as suspect and re-verified in full, and the session
+is not continued.
+
+**Code review is always a separate session**, never the one that wrote the code.
+Tests written by the same model in the same line of reasoning turn CI green on
+wrong code: a misreading of the task lands in the code and in the test
+identically.
+
+**The planning session does not make decisions the coding session will make on
+its own from its own context.** A spec says WHICH files change and what the
+result must be. It does not say HOW to write the code.
+
+**Progressive disclosure.** This file holds pointers, not architecture: "need the
+architecture — read that file". CLAUDE.md is always in context, so it carries
+only what is always needed.
+
+**Code comments explain "why this way and not otherwise"**, not what the line
+does. They are the project's main long-lived context: specs are archived once
+executed, the code stays.
+
+## Feature workflow
+
+**Uncertainty goes left.** The first one or two stories of an epic are done with
+the owner in the loop, turn by turn — that is where every design decision gets
+made. The rest run as a loop with review at the end.
+
+**Tracer bullet.** A new feature starts as one thin scenario driven all the way
+through every layer (Postgres → API → UI → report). Everything else is grown on
+top of that once it runs end to end.
+
+**Epic stories are written immediately before work on the epic starts**, not in
+advance. After the first story the remaining ones change.
+
+**No parallelism inside an epic.** Between epics, parallelise along the
+dependency graph.
+
+**When the result is wrong, first locate the error.**
+- Error in the spec → fix the spec and regenerate the code in full. Do not patch
+  code against a spec that is wrong.
+- Error in the coding → do not touch the spec.
+
+**Blast radius = 0** (a couple of lines in one file): no spec needed. Review by a
+separate session is still mandatory.
+
+**Do not give screenshots to the coding agent** — they are expensive in tokens.
+Hand it the structure instead.
