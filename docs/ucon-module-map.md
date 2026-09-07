@@ -4,7 +4,7 @@ This file is a COPY. Edit the source only, then refresh the copies in:
   ucon-field-app/docs/ucon-module-map.md
   ucon-cabinet-engine/docs/ucon-module-map.md
   ucon-kitchen/docs/ucon-module-map.md
-Version: 2026-09-07
+Version: 2026-09-07 (rev.2 — уточнения по приёмке AC-1; факты не менялись)
 -->
 
 # UCON — карта модулей (черновик)
@@ -43,6 +43,12 @@ Version: 2026-09-07
 | `ucon-field-app` | `main` | `65770e3` | — | `Confirmed` — `git log -1 main` |
 | `ucon-cabinet-engine` | `main` | `30b8b7b` | `github.com/UCONSD/ucon-cabinet-engine` | `Confirmed` — `git log`, `git remote -v` |
 | `ucon-kitchen` | `main` | `a31a812` | `github.com/UCONSD/ucon-kitchen` | `Confirmed` — `git log`, `git remote -v` |
+
+⚠️ **Таблица фиксирует состояние на момент чтения.** После сессии сам этот файл был
+закоммичен поверх: `ucon-field-app` `09eb4c9`, `ucon-cabinet-engine` `d342709`,
+`ucon-kitchen` `71ef13f` — по одному коммиту «docs: UCON module map draft (S-001)»,
+содержащему только `docs/ucon-module-map.md`. Факты карты от этого не меняются.
+`Confirmed` — `git log`, `git show --stat` (приёмочная проверка 2026-09-07).
 
 ⚠️ **Рабочее дерево Field App читалось на фича-ветке, а не на `main`** (ветка на два коммита
 впереди `main`). Все факты о файлах Field App ниже — с этой ветки. `Confirmed` — `git branch`.
@@ -224,8 +230,10 @@ discovery, собирает структурированный Project State, к
 ### 5.2 Рёбра, которых в коде нет
 
 **N-1. Между тремя репозиториями нет ни одного импорта, общей схемы или общего remote-хранилища.**
-Grep по `src/` каждого репозитория не дал ни одной ссылки на другой репозиторий; единственное
-совпадение — путь в комментарии `dev_reload.rb`, указывающий на собственную папку. Общие у них:
+Grep по `src/` каждого репозитория не дал ни одной ссылки на другой репозиторий.
+Совпадения по строке поиска есть, но все они самоссылки: в Field App — его собственный идентификатор проекта Firebase
+(`src/firebase.js`, `src/scripts/auditOrphanedPhotos.*`), в Cabinet Engine — собственное имя
+расширения (`src/ucon_cabinet_engine.rb`, `core/95_dev_bridge.rb`, `dev_reload.rb`). Общие у них:
 организация на GitHub (`UCONSD`), шаблон спеки (E-1) и человек. `Confirmed` — grep по `src/`, `git remote -v`.
 
 **N-2. Takeoff → identity и реестр проектов Field App.** Предполагается в аудите как форма
@@ -265,8 +273,8 @@ code, schema, auth, or data with `ucon-field-app`. They share only accounts and 
 ### 7A. Нужны для решения D-02 «где живёт платформа»
 
 **Q-01. Существует ли хаб UCON·OS как код — и где?**
-На этой машине его нет (§2). Нужен URL репозитория или указание машины. Пока ответа нет, любой
-выбор кодовой базы — угадывание. Это же главный риск аудита 30.08 (Р1).
+На этой машине его нет — `No code on this machine` (§2). Нужен URL репозитория или
+указание машины. Пока ответа нет, любой выбор кодовой базы — угадывание. Это же главный риск аудита 30.08 (Р1).
 
 **Q-02. Что технически значит «общая система»: единый провайдер identity, единый реестр проектов
 или единая база данных?**
@@ -282,8 +290,8 @@ code, schema, auth, or data with `ucon-field-app`. They share only accounts and 
 его вмещать — набор кандидатов один; если он явно вне контура — другой.
 
 **Q-05. Где живёт Takeoff и от чего он читает проекты?**
-Кода нет ни с одной стороны (§2). Ответ на Q-02 задаёт, чем Takeoff связан с Field App —
-`projectId` и email по сверке, общая база или ничего.
+Кода нет ни с одной стороны — `No code on this machine` (§2). Ответ на Q-02 задаёт,
+чем Takeoff связан с Field App — `projectId` и email по сверке, общая база или ничего.
 
 **Q-06. Кто владеет identity, если у платформы два разных класса пользователей?**
 Field App: доступ по allowlist, PM заводит человека до первого входа (`Confirmed`, §1.1).
@@ -309,17 +317,17 @@ Finding 1 слит в `main` (`Confirmed`, E-6). Закрыт ли остато�
 что-нибудь за пределами репозитория?
 
 **Q-12.** Остаётся ли заявленная в `ucon-kitchen/docs/ARCHITECTURE.md` схема из семи модулей
-планом, при том что кода приложения нет, а на диске лежит CLI-срез движка?
+планом, при том что кода приложения нет, а на диске лежит CLI-срез движка (`Confirmed`, §1.3)?
 
 **Q-13.** `pdf2room`, `site-capture`, `ucon-refinery` — модули будущей платформы или отдельные
 исследовательские треки? В карту эпиков они сейчас не входят.
 
-**Q-14.** `~/dev/ucon-cabinet` — пустая директория: удалить или зарезервирована?
+**Q-14.** `~/dev/ucon-cabinet` — пустая директория (`Confirmed`, §3): удалить или зарезервирована?
 `ucon-sketchup-scripts` — заменён Cabinet Engine или ещё используется?
 
 **Q-15.** Какая машина держит авторитетный клон? Аудит 30.08 фиксировал незапушенный коммит
 `adf8d20` на офисном Маке; в этой сессии читался только лаптоп, и Field App читался на фича-ветке,
-а не на `main`.
+а не на `main`. `Confirmed` — аудит §Sources Inspected, `git branch`.
 
 ---
 
